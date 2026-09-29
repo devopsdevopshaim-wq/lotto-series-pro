@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>Lotto Pro — חיזוי עם הסתברויות</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="style.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header class="header mb-3">
+      <div class="logo">LP</div>
+      <div>
+        <h1>🔷 Lotto Pro — חיזוי הסתברויות</h1>
+        <p class="small-muted">חיזוי מבוסס היסטוריה עם משקלים דינמיים, גרפים, היסטוריה וייצוא PDF</p>
+      </div>
+    </header>
+
+    <!-- top controls -->
+    <div class="row g-3 mb-3">
+      <div class="col-md-6">
+        <div class="card p-3">
+          <h4>הזן נתונים / ייבא CSV</h4>
+          <div class="small-muted mb-2">פורמט CSV מומלץ: <code>date,n1,n2,n3,n4,n5,n6,extra</code></div>
+          <div class="d-flex gap-2 mb-2">
+            <input id="csvFile" type="file" accept=".csv" class="form-control form-control-sm">
+            <button id="importCsvBtn" class="btn btn-primary btn-sm">ייבא CSV</button>
+            <button id="clearBtn" class="btn btn-danger btn-sm ms-auto">איפוס מאגר</button>
+          </div>
+
+          <form id="manualForm" class="row g-2">
+            <div class="col-md-7"><input id="seriesInput" class="form-control form-control-sm" placeholder="1,5,12,20,25,30"></div>
+            <div class="col-md-2"><input id="extraInput" class="form-control form-control-sm" type="number" min="1" max="7" placeholder="נוסף"></div>
+            <div class="col-md-2"><input id="dateInput" class="form-control form-control-sm" type="date"></div>
+            <div class="col-md-1 d-grid"><button class="btn btn-success btn-sm">הוסף</button></div>
+          </form>
+        </div>
+      </div>
+
+      <div class="col-md-6">
+        <div class="card p-3">
+          <h4>משקלי מודל (כיצד לחשב הסתברויות)</h4>
+          <div class="small-muted mb-2">התאם את השפעת הקריטריונים — השפעה יחסית</div>
+
+          <label class="small-muted">שכיחות (Frequency) <strong id="wFreqTxt">40</strong></label>
+          <input id="wFreq" type="range" min="0" max="100" value="40" class="form-range mb-2">
+
+          <label class="small-muted">טריות (Recency) <strong id="wRecTxt">25</strong></label>
+          <input id="wRec" type="range" min="0" max="100" value="25" class="form-range mb-2">
+
+          <label class="small-muted">צפיפות רצפים (Sequence density) <strong id="wSeqTxt">15</strong></label>
+          <input id="wSeq" type="range" min="0" max="100" value="15" class="form-range mb-2">
+
+          <label class="small-muted">זוגות (Pair co-occurrence) <strong id="wPairTxt">10</strong></label>
+          <input id="wPair" type="range" min="0" max="100" value="10" class="form-range mb-2">
+
+          <label class="small-muted">אקראי קל (Randomness) <strong id="wRandTxt">10</strong></label>
+          <input id="wRand" type="range" min="0" max="100" value="10" class="form-range mb-2">
+
+          <div class="d-flex gap-2 mt-2">
+            <button id="resetWeights" class="btn btn-outline-light btn-sm">איפוס ברירת-מחדל</button>
+            <button id="saveWeights" class="btn btn-outline-light btn-sm">שמור משקלים</button>
+          </div>
+          <div class="note mt-2">המערכת מחשבת אחוזים יחסיים לכל מספר (1–37) לפי המשקלים הנוכחיים.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- stats table -->
+    <div class="card p-3 mb-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h4>טבלת סדרות</h4>
+        <div>
+          <label class="me-2 small-muted">מיון:</label>
+          <select id="sortSelect" class="form-select form-select-sm w-auto d-inline-block">
+            <option value="count">שכיחות</option>
+            <option value="last">תאריך</option>
+            <option value="score">ציון</option>
+          </select>
+          <button id="exportCsv" class="btn btn-outline-light btn-sm ms-2">ייצא CSV</button>
+        </div>
+      </div>
+
+      <div style="max-height:300px; overflow:auto;">
+        <table id="seriesTable" class="table table-hover table-sm text-white mb-0">
+          <thead><tr><th>#</th><th>סדרה</th><th>נוסף</th><th>הופעות</th><th>%</th><th>אחרון</th><th>ציון</th><th>מחיקה</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="row mt-3">
+        <div class="col-md-6">
+          <h6 class="small-muted">טופ 10 סדרות</h6>
+          <canvas id="topChart" height="160"></canvas>
+        </div>
+        <div class="col-md-6">
+          <h6 class="small-muted">הסתברויות למספרים (1–37)</h6>
+          <canvas id="probChart" height="160"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- predictions -->
+    <div class="card p-3 mb-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h4>חיזוי — התוצאות עם אחוזים</h4>
+        <div>
+          <input id="predCount" type="number" class="form-control form-control-sm w-auto d-inline-block" value="8" min="1" max="50">
+          <button id="runPredict" class="btn btn-warning btn-sm ms-2">הרץ חיזוי</button>
+          <button id="savePrediction" class="btn btn-outline-light btn-sm ms-1">שמור לחזית היסטוריה</button>
+          <button id="exportPredPdf" class="btn btn-secondary btn-sm ms-1">ייצא PDF</button>
+        </div>
+      </div>
+
+      <div id="predictionsArea" style="max-height:380px; overflow:auto"></div>
+    </div>
+
+    <!-- below: combos, seq density, history -->
+    <div class="card p-3 mb-3">
+      <h4>כלים נוספים</h4>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <h6 class="small-muted">צפיפות רצפים</h6>
+          <button id="runSeq" class="btn btn-primary btn-sm">נתח רצפים</button>
+          <div id="seqRes" class="mt-2 small-muted"></div>
+        </div>
+
+        <div class="col-md-4">
+          <h6 class="small-muted">קומבינציות M → 6 מתוך M</h6>
+          <div class="d-flex gap-2 align-items-center">
+            <input id="Minput" type="number" class="form-control form-control-sm w-auto" value="12" min="6" max="20">
+            <input id="capInput" type="number" class="form-control form-control-sm w-auto" value="2000" min="100" max="20000">
+            <button id="genComb" class="btn btn-success btn-sm ms-2">צור</button>
+          </div>
+          <div id="combInfo" class="mt-2 small-muted"></div>
+          <div id="combTable" style="max-height:200px; overflow:auto; margin-top:8px;"></div>
+        </div>
+
+        <div class="col-md-4">
+          <h6 class="small-muted">היסטוריית ניבויים</h6>
+          <div class="d-flex gap-2">
+            <button id="showHist" class="btn btn-outline-light btn-sm">הצג</button>
+            <button id="clearHist" class="btn btn-outline-danger btn-sm">נקה</button>
+          </div>
+          <div id="histWrap" style="max-height:200px; overflow:auto; margin-top:8px;"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+/* lotto_series_pro.js — ניהול מלא של מודל ההסתברויות, UI ופונקציות שמירה/ייצוא */
+
+/* storage keys */
+const STORAGE = 'lotto_pro_dataset_v1';
+const WEIGHTS = 'lotto_pro_weights_v1';
+const HISTORY = 'lotto_pro_history_v1';
+
+/* state */
+let dataset = []; // {date, nums:[6], extra}
+let lastPrediction = null;
+
+/* DOM */
+const csvFile = document.getElementById('csvFile');
+const importCsvBtn = document.getElementById('importCsvBtn');
+const clearBtn = document.getElementById('clearBtn');
+const manualForm = document.getElementById('manualForm');
+const seriesTableBody = document.querySelector('#seriesTable tbody');
+const sortSelect = document.getElementById('sortSelect');
+const exportCsv = document.getElementById('exportCsv');
+
+const wFreq = document.getElementById('wFreq'), wRec = document.getElementById('wRec'), wSeq = document.getElementById('wSeq'), wPair = document.getElementById('wPair'), wRand = document.getElementById('wRand');
+const wFreqTxt = document.getElementById('wFreqTxt'), wRecTxt = document.getElementById('wRecTxt'), wSeqTxt = document.getElementById('wSeqTxt'), wPairTxt = document.getElementById('wPairTxt'), wRandTxt = document.getElementById('wRandTxt');
+const resetWeights = document.getElementById('resetWeights'), saveWeights = document.getElementById('saveWeights');
+
+const topChartEl = document.getElementById('topChart'), probChartEl = document.getElementById('probChart');
+let topChart = null, probChart = null;
+
+const runPredict = document.getElementById('runPredict'), predCount = document.getElementById('predCount'), predictionsArea = document.getElementById('predictionsArea');
+const savePrediction = document.getElementById('savePrediction'), exportPredPdf = document.getElementById('exportPredPdf');
+
+const runSeq = document.getElementById('runSeq'), seqRes = document.getElementById('seqRes');
+const Minput = document.getElementById('Minput'), capInput = document.getElementById('capInput'), genComb = document.getElementById('genComb'), combInfo = document.getElementById('combInfo'), combTable = document.getElementById('combTable');
+const showHist = document.getElementById('showHist'), clearHist = document.getElementById('clearHist'), histWrap = document.getElementById('histWrap');
+
+/* helpers */
+function saveDataset(){ localStorage.setItem(STORAGE, JSON.stringify(dataset)); renderAll(); }
+function loadDataset(){ const s = localStorage.getItem(STORAGE); dataset = s ? JSON.parse(s) : []; }
+function saveWeightsToStorage(){ localStorage.setItem(WEIGHTS, JSON.stringify({freq:+wFreq.value, rec:+wRec.value, seq:+wSeq.value, pair:+wPair.value, rand:+wRand.value})); }
+function loadWeightsFromStorage(){ const s = localStorage.getItem(WEIGHTS); if(s){ try{ const w = JSON.parse(s); wFreq.value=w.freq; wRec.value=w.rec; wSeq.value=w.seq; wPair.value=w.pair; wRand.value=w.rand; updateWeightLabels(); return;}catch(e){} } setDefaultWeights(); }
+function setDefaultWeights(){ wFreq.value=40; wRec.value=25; wSeq.value=15; wPair.value=10; wRand.value=10; updateWeightLabels(); saveWeightsToStorage(); }
+function updateWeightLabels(){ wFreqTxt.textContent = wFreq.value; wRecTxt.textContent = wRec.value; wSeqTxt.textContent = wSeq.value; wPairTxt.textContent = wPair.value; wRandTxt.textContent = wRand.value; }
+function loadHistory(){ const s = localStorage.getItem(HISTORY); return s?JSON.parse(s):[]; }
+function saveHistory(h){ localStorage.setItem(HISTORY, JSON.stringify(h)); }
+
+/* parse helpers */
+function normalizeDate(s){ if(!s) return ''; s=String(s).trim(); if(/^\d{4}-\d{1,2}-\d{1,2}$/.test(s)) return s; const m=s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/); if(m){ let d=m[1].padStart(2,'0'), mo=m[2].padStart(2,'0'), y=m[3]; if(y.length===2) y='20'+y; return `${y}-${mo}-${d}`; } const dt=new Date(s); if(!isNaN(dt)) return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`; return s; }
+function parseSix(str){ const parts = String(str).split(/[\s,;]+/).map(x=>Number(x)).filter(n=>Number.isInteger(n)&&n>=1&&n<=37); if(parts.length!==6) return null; const uniq = Array.from(new Set(parts)); if(uniq.length!==6) return null; return parts.sort((a,b)=>a-b); }
+function tupleKey(nums, extra){ return nums.slice().sort((a,b)=>a-b).join('-') + '|' + extra; }
+function arraysEqual(a,b){ if(a.length!==b.length) return false; for(let i=0;i<a.length;i++) if(a[i]!==b[i]) return false; return true; }
+
+/* compute stats */
+function computeSeriesMap(){ const map=new Map(); dataset.forEach((r,idx)=>{ const key = tupleKey(r.nums,r.extra); const rec = map.get(key) || {nums:r.nums.slice(), extra:r.extra, count:0, lastIdx:-1, lastDate:null}; rec.count++; rec.lastIdx = Math.max(rec.lastIdx, idx); if(!rec.lastDate || (r.date && r.date>rec.lastDate)) rec.lastDate=r.date; map.set(key,rec); }); return map; }
+function computeNumFreq(){ const f=Array(38).fill(0); dataset.forEach(r=> r.nums.forEach(n=> f[n]++)); return f; }
+function computePairFreq(){ const p={}; dataset.forEach(r=>{ for(let i=0;i<r.nums.length;i++) for(let j=i+1;j<r.nums.length;j++){ const k=`${r.nums[i]}-${r.nums[j]}`; p[k]=(p[k]||0)+1; } }); return p; }
+
+/* sequence density: count consecutive runs across each draw */
+function analyzeSequences(){ const seqs = {}; for(let L=2;L<=6;L++) seqs[L]=0; dataset.forEach(r=>{ const a=r.nums.slice().sort((x,y)=>x-y); let run=[a[0]]; for(let i=1;i<a.length;i++){ if(a[i]===a[i-1]+1) run.push(a[i]); else { if(run.length>=2) seqs[run.length]=(seqs[run.length]||0)+1; run=[a[i]]; } } if(run.length>=2) seqs[run.length]=(seqs[run.length]||0)+1; }); return seqs; }
+
+/* scoring each number (1..37) -> base components:
+   - freq: normalized frequency
+   - recency: based on last occurrence index
+   - seqBoost: if number often appears in sequences
+   - pairBoost: aggregate pair co-occurrence influence with top numbers
+   returns perNumberScore array indexed 1..37
+*/
+function computePerNumberScores(){
+  const freq = computeNumFreq();
+  const N = dataset.length;
+  const maxF = Math.max(...freq);
+  const lastPos = Array(38).fill(-1);
+  dataset.forEach((r,idx)=> r.nums.forEach(n=> lastPos[n]=idx));
+  const recRaw = Array(38).fill(0); for(let i=1;i<=37;i++) recRaw[i] = lastPos[i] === -1 ? 0 : 1/((N-1-lastPos[i])+1);
+  const maxRec = Math.max(...recRaw);
+  const seqCount = {}; // how often number appears inside sequences
+  for(let i=1;i<=37;i++) seqCount[i]=0;
+  dataset.forEach(r=>{ const a=r.nums.slice().sort((x,y)=>x-y); for(let i=0;i<a.length;i++){ // check neighbors
+    if((i>0 && a[i]===a[i-1]+1) || (i<a.length-1 && a[i+1]===a[i]+1)) seqCount[a[i]]++; } });
+  const maxSeq = Math.max(...Object.values(seqCount));
+  // pair influence: sum of freq of pair partners (normalized)
+  const pair = computePairFreq();
+  const pairScore = Array(38).fill(0);
+  for(let i=1;i<=37;i++){
+    let s=0;
+    for(let j=1;j<=37;j++){ if(i===j) continue; const k = i<j? `${i}-${j}`:`${j}-${i}`; s += (pair[k]||0); }
+    pairScore[i] = s;
+  }
+  const maxPair = Math.max(...pairScore);
+
+  // assemble normalized scores
+  const per = Array(38).fill(0);
+  for(let i=1;i<=37;i++){
+    const f = maxF>0 ? freq[i]/maxF : 0;
+    const r = maxRec>0 ? recRaw[i]/maxRec : 0;
+    const s = maxSeq>0 ? seqCount[i]/maxSeq : 0;
+    const p = maxPair>0 ? pairScore[i]/maxPair : 0;
+    per[i] = { f, r, s, p };
+  }
+  return per;
+}
+
+/* compute probabilities for numbers and extra based on weights */
+function computeProbabilities(){
+  const per = computePerNumberScores();
+  const weights = { freq:+wFreq.value, rec:+wRec.value, seq:+wSeq.value, pair:+wPair.value, rand:+wRand.value };
+  const sumW = Object.values(weights).reduce((a,b)=>a+b,0) || 1;
+  const normW = { freq:weights.freq/sumW, rec:weights.rec/sumW, seq:weights.seq/sumW, pair:weights.pair/sumW, rand:weights.rand/sumW };
+  const scores = Array(38).fill(0);
+  for(let i=1;i<=37;i++){
+    const comp = per[i];
+    const base = normW.freq*comp.f + normW.rec*comp.r + normW.seq*comp.s + normW.pair*comp.p + normW.rand*(1/37);
+    scores[i] = Math.max(0, base);
+  }
+  // normalize to probabilities
+  const sum = scores.slice(1).reduce((a,b)=>a+b,0) || 1;
+  const probs = Array(38).fill(0);
+  for(let i=1;i<=37;i++) probs[i] = scores[i]/sum;
+  // extras: simple freq
+  const extraFreq = Array(8).fill(0);
+  dataset.forEach(r=> { if(r.extra>=1 && r.extra<=7) extraFreq[r.extra]++; });
+  let sE = extraFreq.reduce((a,b)=>a+b,0);
+  const extraProb = Array(8).fill(0);
+  if(sE>0) for(let i=1;i<=7;i++) extraProb[i] = extraFreq[i]/sE; else for(let i=1;i<=7;i++) extraProb[i] = 1/7;
+  return { probs, extraProb };
+}
+
+/* build candidate sets: we'll create K candidates by sampling deterministic top numbers
+   Approach:
+   - rank numbers by prob and try greedy generation of combinations of 6 with highest joint score
+   - also include exact historical series at top
+*/
+function generatePredictions(K=8){
+  const stats = computeSeriesMap();
+  const perNum = computeProbabilities();
+  const probs = perNum.probs;
+  const extras = perNum.extraProb;
+  const totalDraws = dataset.length;
+  const candidates = [];
+
+  // 1) include exact historical series with score = average of member probs * boost
+  for(const v of stats.values()){
+    const avgProb = v.nums.reduce((a,n)=>a+probs[n],0)/6;
+    const extraP = extras[v.extra] || 0;
+    const score = avgProb*0.6 + extraP*0.4 + Math.min(0.2, v.count/Math.max(1,totalDraws)); // boost existing
+    candidates.push({ nums:v.nums.slice(), extra:v.extra, score, existed:true });
+  }
+
+  // 2) greedy combos from top numbers
+  const numsRank = [];
+  for(let i=1;i<=37;i++) numsRank.push({n:i,p:probs[i]});
+  numsRank.sort((a,b)=>b.p - a.p);
+  const topList = numsRank.slice(0, Math.max(12, Math.min(20, Number(document.getElementById('Minput').value||12)))).map(x=>x.n);
+
+  // generate combinations C(topList,6) but cap to reasonable number and compute joint score = product-like approx
+  function combs(arr,k,cap=5000){
+    const res=[]; const comb=(s,cur)=>{ if(res.length>=cap) return; if(cur.length===k){ res.push(cur.slice()); return; } for(let i=s;i<arr.length;i++){ cur.push(arr[i]); comb(i+1,cur); cur.pop(); if(res.length>=cap) break;} }; comb(0,[]); return res;
+  }
+  const combos = combs(topList,6,Math.min(3000, (Number(document.getElementById('capInput').value)||2000)));
+  combos.forEach(c=>{
+    const avg = c.reduce((a,n)=>a+probs[n],0)/6;
+    // choose best extra based on extras distribution
+    let bestExtra = 1, bestEP = 0;
+    for(let e=1;e<=7;e++){ if(extras[e] > bestEP){ bestEP = extras[e]; bestExtra = e; } }
+    const score = avg*0.8 + bestEP*0.2;
+    candidates.push({ nums:c.slice(), extra:bestExtra, score, existed:false });
+  });
+
+  // dedupe by key and sort
+  const map = new Map();
+  candidates.forEach(c=>{ const k = tupleKey(c.nums,c.extra); if(!map.has(k) || map.get(k).score < c.score) map.set(k,c); });
+  const arr = Array.from(map.values());
+  arr.sort((a,b)=>b.score - a.score);
+  const top = arr.slice(0, Math.min(K, arr.length));
+  lastPrediction = top;
+  // save to history quick (not auto) — user can press Save
+  return top;
+}
+
+/* UI render */
+function renderSeriesTable(){
+  const stats = Array.from(computeSeriesMap().values());
+  const numFreq = computeNumFreq();
+  const total = dataset.length;
+  const rows = stats.map(s=> {
+    // compute simple score for table (avg per-number prob)
+    const per = computeProbabilities();
+    const avg = s.nums.reduce((a,n)=>a + per.probs[n],0)/6;
+    return {...s, score: avg};
+  });
+  const sortBy = sortSelect.value;
+  rows.sort((a,b)=> sortBy==='count' ? b.count-a.count : sortBy==='last' ? (b.lastDate||'').localeCompare(a.lastDate||'') : b.score-a.score );
+  seriesTableBody.innerHTML = '';
+  rows.forEach((r,idx)=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${idx+1}</td>
+      <td>${r.nums.join(', ')}</td>
+      <td>${r.extra}</td>
+      <td>${r.count}</td>
+      <td>${((r.count/Math.max(1,total))*100).toFixed(3)}%</td>
+      <td>${r.lastDate||'-'}</td>
+      <td>${r.score.toFixed(5)}</td>
+      <td><button class="btn btn-sm btn-outline-danger" onclick="deleteSeries('${tupleKey(r.nums,r.extra)}')">מחק</button></td>`;
+    seriesTableBody.appendChild(tr);
+  });
+
+  renderTopChart(rows.slice(0,10));
+  renderProbChart();
+}
+
+/* topChart & probChart */
+function renderTopChart(rows){
+  const labels = rows.map(r=> r.nums.join(',') + ' +' + r.extra);
+  const data = rows.map(r=> r.count);
+  if(topChart) topChart.destroy();
+  topChart = new Chart(topChartEl, {
+    type:'bar',
+    data:{ labels, datasets:[{ label:'הופעות', data, backgroundColor:'rgba(111,231,255,0.9)' }]},
+    options:{ indexAxis:'y', plugins:{legend:{display:false}} }
+  });
+}
+function renderProbChart(){
+  const per = computeProbabilities();
+  const labels = []; const data = [];
+  for(let i=1;i<=37;i++){ labels.push(i.toString()); data.push(Number((per.probs[i]*100).toFixed(3))); }
+  if(probChart) probChart.destroy();
+  probChart = new Chart(probChartEl, {
+    type:'bar',
+    data:{ labels, datasets:[{ label:'הסתברות יחסית %', data, backgroundColor:'rgba(255,215,90,0.9)' }]},
+    options:{ plugins:{legend:{display:false}}, scales:{ y:{ beginAtZero:true } } }
+  });
+}
+
+/* render predictions */
+function renderPredictions(preds){
+  predictionsArea.innerHTML = '';
+  if(!preds || preds.length===0){ predictionsArea.innerHTML = '<div class="small-muted">אין ניבויים</div>'; return; }
+  preds.forEach((p,i)=>{
+    const div = document.createElement('div'); div.className='predRow';
+    const left = document.createElement('div'); left.innerHTML = `<strong>ניבוי ${i+1}</strong> <div class="small-muted">${p.existed? 'קיים' : 'חדש'}</div>`;
+    const mid = document.createElement('div'); mid.innerHTML = p.nums.map(n=>`<span class="chip">${n}</span>`).join('') + ` <span class="chip" style="background:${'var(--cyan)'};color:#000;margin-left:8px">${p.extra}</span>`;
+    const right = document.createElement('div'); right.innerHTML = `<div class="small-muted">סיכוי יחסית: <strong>${(p.score*100).toFixed(3)}%</strong></div>`;
+    div.appendChild(left); div.appendChild(mid); div.appendChild(right);
+    predictionsArea.appendChild(div);
+  });
+}
+
+/* delete series */
+window.deleteSeries = function(key){ if(!confirm('למחוק כל ההופעות של סדרה זו?')) return; const [s,e]=key.split('|'); const nums=s.split('-').map(Number); dataset = dataset.filter(d => !(arraysEqual(d.nums.slice().sort((a,b)=>a-b), nums) && Number(d.extra)===Number(e))); saveDataset(); };
+
+/* CSV import/export & events */
+manualForm.addEventListener('submit', e=>{ e.preventDefault(); const s=document.getElementById('seriesInput').value; const nums=parseSix(s); const extra=Number(document.getElementById('extraInput').value); const date=normalizeDate(document.getElementById('dateInput').value); if(!nums){ alert('הזן 6 מספרים חוקיים (1-37) ללא כפילויות'); return; } if(!Number.isInteger(extra) || extra<1 || extra>7){ alert('המספר הנוסף חייב להיות 1-7'); return; } dataset.push({date, nums, extra}); document.getElementById('seriesInput').value=''; document.getElementById('extraInput').value=''; document.getElementById('dateInput').value=''; saveDataset(); });
+
+importCsvBtn.addEventListener('click', ()=> csvFile.click());
+csvFile.addEventListener('change', e=>{ const f=e.target.files[0]; if(!f) return; Papa.parse(f, { skipEmptyLines:true, complete: (res)=>{ if(!res.data || res.data.length===0){ alert('קובץ ריק'); return;} let added=0; res.data.forEach(row=>{ const arr = Array.isArray(row)? row.map(x=>String(x).trim()): Object.values(row).map(x=>String(x).trim()); if(arr.length>=8){ const d=arr[0]; const nums=arr.slice(1,7).map(Number); const extra=Number(arr[7]); if(nums.every(n=>Number.isInteger(n)&&n>=1&&n<=37) && Number.isInteger(extra) && extra>=1 && extra<=7){ dataset.push({ date: normalizeDate(d), nums: nums.sort((a,b)=>a-b), extra }); added++; return; } } if(arr.length>=3){ const numsStr = arr[0].replace(/"/g,''); const parts = numsStr.split(/[\s,]+/).map(Number).filter(n=>Number.isInteger(n)); const extra=Number(arr[1]); const date = arr[2]; if(parts.length===6 && Number.isInteger(extra) && extra>=1 && extra<=7){ dataset.push({ date: normalizeDate(date), nums: parts.sort((a,b)=>a-b), extra }); added++; return; } } }); saveDataset(); alert(`יובאו ${added} שורות`); }, error: ()=> alert('שגיאה בקריאת CSV') }); });
+
+clearBtn.addEventListener('click', ()=> { if(!confirm('למחוק את כל המאגר?')) return; dataset=[]; saveDataset(); });
+
+exportCsv.addEventListener('click', ()=>{ if(dataset.length===0){ alert('אין נתונים לייצוא'); return; } let csv='date,n1,n2,n3,n4,n5,n6,extra\n'; dataset.forEach(r=> csv += `${r.date},${r.nums.join(',')},${r.extra}\n`); const blob=new Blob([csv],{type:'text/csv'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='series_export.csv'; a.click(); URL.revokeObjectURL(url); });
+
+/* weights events */
+[wFreq,wRec,wSeq,wPair,wRand].forEach(el=> el.addEventListener('input', ()=> { updateWeightLabels(); renderAll(); }));
+resetWeights.addEventListener('click', ()=> { setDefaultWeights(); renderAll(); });
+saveWeights.addEventListener('click', ()=> { saveWeightsToStorage(); alert('משקלים נשמרו'); });
+
+/* predictions */
+runPredict.addEventListener('click', ()=>{ const k=Math.max(1,Math.min(200, Number(predCount.value)||8)); const preds = generatePredictions(k); renderPredictions(preds); });
+
+savePrediction.addEventListener('click', ()=>{ if(!lastPrediction || lastPrediction.length===0){ alert('הרץ חיזוי קודם'); return; } const hist=loadHistory(); hist.unshift({ ts:new Date().toISOString(), weights:{freq:+wFreq.value, rec:+wRec.value, seq:+wSeq.value, pair:+wPair.value, rand:+wRand.value}, prediction: lastPrediction }); while(hist.length>500) hist.pop(); saveHistory(hist); alert('נשמר בהיסטוריה'); });
+
+exportPredPdf.addEventListener('click', async ()=>{ if(!lastPrediction){ alert('הרץ חיזוי קודם'); return; } // capture predictions area and table
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'pt', format:'a4' });
+  let y=40; doc.setFontSize(16); doc.text('Lotto Pro — חיזוי וסטטיסטיקה', 40, y); y+=20;
+  // table screenshot
+  const tableArea = document.querySelector('#seriesTable').parentElement;
+  await html2canvas(tableArea, { scale:1.4 }).then(canvas=>{ const img=canvas.toDataURL('image/png'); const w=doc.internal.pageSize.getWidth()-80; const h = canvas.height * w / canvas.width; doc.addImage(img,'PNG',40,y,w,h); y+=h+10; }).catch(()=>{ doc.text('טבלת סדרות לא נכללה',40,y); y+=20; });
+  // predictions
+  const predArea = document.getElementById('predictionsArea');
+  await html2canvas(predArea, { scale:1.4 }).then(canvas=>{ const img=canvas.toDataURL('image/png'); const w=doc.internal.pageSize.getWidth()-80; const h=canvas.height * w / canvas.width; if(y+h > doc.internal.pageSize.getHeight()-40){ doc.addPage(); y=40;} doc.addImage(img,'PNG',40,y,w,h); y+=h+10; }).catch(()=>{ doc.text('הניבויים לא נכללו',40,y); y+=20; });
+  doc.save('lotto_prediction.pdf'); });
+
+/* sequence analyze */
+runSeq.addEventListener('click', ()=>{ const s = analyzeSequences(); let txt = 'רצפים שנמצאו — אורך : ספירה\\n'; for(let L=2;L<=6;L++) txt += `${L}: ${s[L]||0} | `; seqRes.innerHTML = txt; });
+
+/* generate combos */
+genComb.addEventListener('click', ()=>{ const M=Math.max(6, Math.min(20, Number(Minput.value)||12)); const cap=Math.max(100, Math.min(50000, Number(capInput.value)||2000)); const topScores = computePerNumberScores(); const arr=[]; for(let i=1;i<=37;i++) arr.push({n:i,score: (topScores[i].f + topScores[i].r + topScores[i].s + topScores[i].p)}); arr.sort((a,b)=>b.score-a.score); const top = arr.slice(0,M).map(x=>x.n); combInfo.textContent = `Top ${M}: ${top.join(', ')}`; // generate combos (cap)
+  function combs(a,k,cap){ const res=[]; const comb=(s,cur)=>{ if(res.length>=cap) return; if(cur.length===k){ res.push(cur.slice()); return; } for(let i=s;i<a.length;i++){ cur.push(a[i]); comb(i+1,cur); cur.pop(); if(res.length>=cap) break; }}; comb(0,[]); return res; }
+  const combos = combs(top,6,cap); combTable.innerHTML=''; const table=document.createElement('table'); table.className='table table-sm table-striped text-white'; const thead=document.createElement('thead'); thead.innerHTML='<tr><th>#</th><th>סדרה</th></tr>'; table.appendChild(thead); const tbody=document.createElement('tbody'); combos.forEach((c,i)=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${i+1}</td><td>${c.join(', ')}</td>`; tbody.appendChild(tr); }); table.appendChild(tbody); combTable.appendChild(table); });
+
+/* history */
+showHist.addEventListener('click', ()=>{ const h = loadHistory(); histWrap.innerHTML=''; if(h.length===0){ histWrap.innerHTML='<div class="small-muted">אין היסטוריה</div>'; return; } h.forEach((it,idx)=>{ const div=document.createElement('div'); div.className='predRow'; const left=document.createElement('div'); left.innerHTML=`<strong>#${idx+1}</strong> ${new Date(it.ts).toLocaleString()}`; const mid=document.createElement('div'); mid.innerHTML = it.prediction.slice(0,6).map(p=> `<span class="chip">${p.nums.join(',')}</span>`).join(' '); div.appendChild(left); div.appendChild(mid); histWrap.appendChild(div); }); });
+clearHist.addEventListener('click', ()=>{ if(!confirm('נקה היסטוריית ניבויים?')) return; saveHistory([]); histWrap.innerHTML=''; });
+
+/* init */
+function renderAll(){ renderSeriesTable(); }
+function init(){ loadDataset(); loadWeightsFromStorage(); renderAll(); updateWeightLabels(); }
+init();
+
+</script>
+
+<!-- bootstrap -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
